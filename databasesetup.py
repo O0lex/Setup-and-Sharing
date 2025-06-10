@@ -1,10 +1,9 @@
 import pandas as pd
 import requests
 from time import sleep
+from tqdm import tqdm
 
 # === Auth Setup ===
-access_token = "PUT ACCESS TOKEN HERE"
-"""
 CLIENT_ID = "your_client_id_here"
 CLIENT_SECRET = "your_client_secret_here"
 
@@ -15,16 +14,15 @@ def get_access_token():
     })
     r.raise_for_status()
     return r.json()["access_token"]
-"""
 
 def make_headers():
-    token = access_token
+    token = get_access_token()
     return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
 BASE = "https://api.locallogic.co/v3"
 
 # === Load Input File ===
-df = pd.read_excel("exampleinput.xlsx")
+df = pd.read_csv("/mnt/data/minimapping.csv")
 
 # === Prepare Columns ===
 df["new_geo_id"] = None
@@ -73,8 +71,8 @@ def fetch_pois(lat, lng, headers):
         print(f"POI fetch failed at ({lat},{lng}): {e}")
         return [], {}, 0
 
-# === Enrichment Loop ===
-for idx, row in df.iterrows():
+# === Enrichment Loop with Progress Bar ===
+for idx, row in tqdm(df.iterrows(), total=len(df), desc="Enriching neighborhoods"):
     lat, lng = row["latitude"], row["longitude"]
     try:
         headers = make_headers()
@@ -111,5 +109,5 @@ df_flat = pd.concat([
 ], axis=1)
 
 # === Save Output ===
-df_flat.to_csv("neighborhoods_enriched.csv", index=False)
-print("✅ Success: Saved as neighborhoods_enriched.csv")
+df_flat.to_csv("mini_mapping_enriched.csv", index=False)
+print("✅ Success: Saved as mini_mapping_enriched.csv")
