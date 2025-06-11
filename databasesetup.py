@@ -22,7 +22,7 @@ def make_headers():
 BASE = "https://api.locallogic.co/v3"
 
 # === Load Input File ===
-df = pd.read_csv("mini_mapping.csv")
+df = pd.read_csv("/mnt/data/minimapping.csv")
 
 # === Prepare Columns ===
 df["new_geo_id"] = None
@@ -91,7 +91,7 @@ for idx, row in tqdm(df.iterrows(), total=len(df), desc="Enriching neighborhoods
         for cat, count in category_counts.items():
             df.at[idx, f"poi_{cat}_count"] = count
 
-        sleep(0.3)  # Avoid rate limits
+        sleep(0.3)
 
     except Exception as e:
         print(f"[{idx}] Failed: {e}")
@@ -100,9 +100,20 @@ for idx, row in tqdm(df.iterrows(), total=len(df), desc="Enriching neighborhoods
 # === Flattening Step ===
 scores_df = pd.json_normalize(df["location_scores"]).add_prefix("location_scores.")
 demo_df = pd.json_normalize(df["demographics"]).add_prefix("demographics.")
-vd_df = pd.json_normalize(df["value_drivers"]).add_prefix("value_drivers.")
+
+# Handle value_drivers row-wise
+vd_df = pd.DataFrame()
+for idx, item in df["value_drivers"].items():
+    if isinstance(item, list):
+        flattened = {f"value_drivers.{d['name']}": d["value"] for d in item if "name" in d and "value" in d}
+        vd_df = pd.concat([vd_df, pd.DataFrame([flattened])], ignore_index=True)
+    else:
+        vd_df = pd.concat([vd_df, pd.DataFrame([{}])], ignore_index=True)
+
+# Count POIs
 df["pois.count"] = df["pois"].apply(lambda x: len(x) if isinstance(x, list) else 0)
 
+# Final assembly
 df_flat = pd.concat([
     df.drop(columns=["location_scores", "demographics", "value_drivers", "pois"]),
     scores_df, demo_df, vd_df
