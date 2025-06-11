@@ -3,7 +3,7 @@ import requests
 from time import sleep
 from tqdm import tqdm
 
-# === Auth Setup ===
+# === Authentication Setup ===
 CLIENT_ID = "your_client_id_here"
 CLIENT_SECRET = "your_client_secret_here"
 
@@ -30,7 +30,7 @@ df["location_scores"] = None
 df["demographics"] = None
 df["value_drivers"] = None
 df["pois"] = None
-df["poi_success"] = 0  # 1 = success, 0 = fail
+df["poi_success"] = 0
 
 # === API Call Functions ===
 def fetch_geography(lat, lng, headers):
@@ -39,13 +39,11 @@ def fetch_geography(lat, lng, headers):
     r.raise_for_status()
     geogs = r.json()["data"]["geographies"]
     if not geogs:
-        return None, None
-    gid, meta = next(iter(geogs.items()))
-    return gid, meta
+        return None
+    return next(iter(geogs))
 
 def fetch_scores(geo_id, headers):
-    params = {"geography_ids": geo_id}
-    r = requests.get(f"{BASE}/scores", headers=headers, params=params)
+    r = requests.get(f"{BASE}/scores", headers=headers, params={"geography_ids": geo_id})
     r.raise_for_status()
     return r.json()["data"]
 
@@ -60,65 +58,73 @@ def fetch_value_drivers(geo_id, headers):
     return r.json()["data"]["value_drivers"]
 
 def fetch_pois(lat, lng, headers):
-    params = {"lat": lat, "lng": lng, "radius": 1000}
     try:
-        r = requests.get(f"{BASE}/enhanced-pois", headers=headers, params=params)
+        r = requests.get(f"{BASE}/enhanced-pois", headers=headers, params={"lat": lat, "lng": lng, "radius": 1000})
         r.raise_for_status()
         pois = r.json()["data"]["results"]
-        meta_counts = r.json()["meta"]["counts"]["total_by_category"]
-        return pois, meta_counts, 1
-    except Exception as e:
-        print(f"POI fetch failed at ({lat},{lng}): {e}")
+        counts = r.json()["meta"]["counts"]["total_by_category"]
+        return pois, counts, 1
+    except:
         return [], {}, 0
 
-# === Enrichment Loop with Progress Bar ===
+# === Enrichment Loop ===
 for idx, row in tqdm(df.iterrows(), total=len(df), desc="Enriching neighborhoods"):
     lat, lng = row["latitude"], row["longitude"]
     try:
         headers = make_headers()
-        geo_id, _ = fetch_geography(lat, lng, headers)
+        geo_id = fetch_geography(lat, lng, headers)
         df.at[idx, "new_geo_id"] = geo_id
 
         if geo_id:
-            df.at[idx, "location_scores"] = fetch_scores(geo_id, headers)
-            df.at[idx, "demographics"] = fetch_demographics(geo_id, headers)
-            df.at[idx, "value_drivers"] = fetch_value_drivers(geo_id, headers)
+            df.at[idx, "location_scores"]  = fetch_scores(geo_id, headers)
+            df.at[idx, "demographics"]     = fetch_demographics(geo_id, headers)
+            df.at[idx, "value_drivers"]    = fetch_value_drivers(geo_id, headers)
 
-        pois, category_counts, poi_success = fetch_pois(lat, lng, headers)
+        pois, counts, ok = fetch_pois(lat, lng, headers)
         df.at[idx, "pois"] = pois
-        df.at[idx, "poi_success"] = poi_success
-
-        for cat, count in category_counts.items():
-            df.at[idx, f"poi_{cat}_count"] = count
+        df.at[idx, "poi_success"] = ok
+        for cat, n in counts.items():
+            df.at[idx, f"poi_{cat}_count"] = n
 
         sleep(0.3)
-
     except Exception as e:
-        print(f"[{idx}] Failed: {e}")
-        continue
+        print(f"[{idx}] Error: {e}")
 
-# === Flattening Step ===
-scores_df = pd.json_normalize(df["location_scores"]).add_prefix("location_scores.")
-demo_df = pd.json_normalize(df["demographics"]).add_prefix("demographics.")
+# === Flatten `location_scores` ===
+score_rows = []
+for item in df["location_scores"]:
+    rec = {}
+    if isinstance(item, dict):
+        loc = item.get("location", {})
+        for k,v in loc.items():
+            rec[f"location_scores.{k}"] = v.get("value")
+    score_rows.append(rec)
+scores_df = pd.DataFrame(score_rows)
 
-# Handle value_drivers row-wise
-vd_df = pd.DataFrame()
-for idx, item in df["value_drivers"].items():
-    if isinstance(item, list):
-        flattened = {f"value_drivers.{d['name']}": d["value"] for d in item if "name" in d and "value" in d}
-        vd_df = pd.concat([vd_df, pd.DataFrame([flattened])], ignore_index=True)
-    else:
-        vd_df = pd.concat([vd_df, pd.DataFrame([{}])], ignore_index=True)
+# === Flatten `demographics` ===
+demo_rows = []
+for item in df["demographics"]:
+    rec = {}
+    if isinstance(item, dict):
+        for cat, cat_val in item.items():
+            for var in cat_val.get("variables", []):
+                rec[f"demographics.{cat}.{var['variable']}"] = var.get("value")
+    demo_rows.append(rec)
+demo_df = pd.DataFrame(demo_rows)
 
-# Count POIs
+# === Flatten `value_drivers` ===
+vd_df = pd.json_normalize(df["value_drivers"].dropna().tolist()).add_prefix("value_drivers.")
+# fill blanks if some rows had no drivers
+vd_df = vd_df.reindex(range(len(df)))
+
+# === Compute POI count ===
 df["pois.count"] = df["pois"].apply(lambda x: len(x) if isinstance(x, list) else 0)
 
-# Final assembly
+# === Final Merge ===
 df_flat = pd.concat([
-    df.drop(columns=["location_scores", "demographics", "value_drivers", "pois"]),
+    df.drop(columns=["location_scores","demographics","value_drivers","pois"]),
     scores_df, demo_df, vd_df
 ], axis=1)
 
-# === Save Output ===
-df_flat.to_csv("mini_mapping_enriched.csv", index=False)
-print("✅ Success: Saved as mini_mapping_enriched.csv")
+df_flat.to_csv("neighborhoods_enriched.csv", index=False)
+print("✅ neighborhoods_enriched.csv saved!")
