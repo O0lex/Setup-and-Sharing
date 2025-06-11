@@ -4,17 +4,6 @@ from time import sleep
 from tqdm import tqdm
 
 # === Auth Setup ===
-CLIENT_ID = "your_client_id_here"
-CLIENT_SECRET = "your_client_secret_here"
-
-def get_access_token():
-    r = requests.get("https://api.locallogic.co/oauth/token", params={
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET
-    })
-    r.raise_for_status()
-    return r.json()["access_token"]
-
 def make_headers():
     token = get_access_token()
     return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -22,7 +11,7 @@ def make_headers():
 BASE = "https://api.locallogic.co/v3"
 
 # === Load Input File ===
-df = pd.read_csv("/mnt/data/minimapping.csv")
+df = pd.read_csv("mini_mapping.csv")
 
 # === Prepare Columns ===
 df["new_geo_id"] = None
@@ -43,8 +32,8 @@ def fetch_geography(lat, lng, headers):
     gid, meta = next(iter(geogs.items()))
     return gid, meta
 
-def fetch_scores(lat, lng, geo_id, headers):
-    params = {"lat": lat, "lng": lng, "geography_ids": geo_id}
+def fetch_scores(geo_id, headers):
+    params = {"geography_ids": geo_id}
     r = requests.get(f"{BASE}/scores", headers=headers, params=params)
     r.raise_for_status()
     return r.json()["data"]
@@ -80,7 +69,7 @@ for idx, row in tqdm(df.iterrows(), total=len(df), desc="Enriching neighborhoods
         df.at[idx, "new_geo_id"] = geo_id
 
         if geo_id:
-            df.at[idx, "location_scores"] = fetch_scores(lat, lng, geo_id, headers)
+            df.at[idx, "location_scores"] = fetch_scores(geo_id, headers)
             df.at[idx, "demographics"] = fetch_demographics(geo_id, headers)
             df.at[idx, "value_drivers"] = fetch_value_drivers(geo_id, headers)
 
@@ -91,7 +80,7 @@ for idx, row in tqdm(df.iterrows(), total=len(df), desc="Enriching neighborhoods
         for cat, count in category_counts.items():
             df.at[idx, f"poi_{cat}_count"] = count
 
-        sleep(0.3)
+        sleep(0.3)  # Avoid rate limits
 
     except Exception as e:
         print(f"[{idx}] Failed: {e}")
