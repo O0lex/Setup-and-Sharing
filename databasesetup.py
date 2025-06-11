@@ -4,6 +4,17 @@ from time import sleep
 from tqdm import tqdm
 
 # === Auth Setup ===
+CLIENT_ID = "your_client_id_here"
+CLIENT_SECRET = "your_client_secret_here"
+
+def get_access_token():
+    r = requests.get("https://api.locallogic.co/oauth/token", params={
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET
+    })
+    r.raise_for_status()
+    return r.json()["access_token"]
+
 def make_headers():
     token = get_access_token()
     return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
